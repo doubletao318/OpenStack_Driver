@@ -720,7 +720,8 @@ class ReplicaPairManager(object):
             if k in local_lun_info:
                 params[k] = local_lun_info[k]
 
-        if "WORKLOADTYPEID" in local_lun_info:
+        if local_lun_info.get("WORKLOADTYPENAME") and local_lun_info.get(
+                "WORKLOADTYPEID"):
             workload_type_name = self.local_client.get_workload_type_name(
                 local_lun_info['WORKLOADTYPEID'])
             rmt_workload_type_id = self.rmt_client.get_workload_type_id(
@@ -993,7 +994,7 @@ class ReplicaPairManager(object):
             drv_data = get_replication_driver_data(v)
             pair_id = drv_data.get('pair_id')
             if not pair_id:
-                LOG.warning(_LW("No pair id in volume %s."), v.id)
+                LOG.warning(_("No pair id in volume %s."), v.id)
                 v_update['updates'] = {'replication_status': 'error'}
                 volumes_update.append(v_update)
                 continue

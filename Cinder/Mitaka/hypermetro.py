@@ -124,15 +124,13 @@ class HuaweiHyperMetro(object):
             {'wwpns': wwns,
              'id': volume.id})
 
-        metadata = huawei_utils.get_lun_metadata(volume)
-        lun_id = metadata.get('remote_lun_id')
-        if lun_id is None:
+        lun_id, _ = huawei_utils.get_volume_lun_id(self.rmt_client, volume)
+        if not lun_id:
             msg = _("Can't get volume id. Volume name: %s.") % volume.id
             LOG.error(msg)
             raise exception.VolumeBackendAPIException(data=msg)
 
         original_host_name = connector['host']
-        host_id = self.client.add_host_with_check(original_host_name)
 
         # Create hostgroup if not exist.
         host_id = self.rmt_client.add_host_with_check(original_host_name)
@@ -192,8 +190,7 @@ class HuaweiHyperMetro(object):
     def disconnect_volume_fc(self, volume, connector):
         """Delete map between a volume and a host for FC."""
         wwns = connector['wwpns']
-        metadata = huawei_utils.get_lun_metadata(volume)
-        lun_id = metadata.get('remote_lun_id')
+        lun_id, _ = huawei_utils.get_volume_lun_id(self.rmt_client, volume)
         host_name = connector['host']
         lungroup_id = None
 

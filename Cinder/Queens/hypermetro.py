@@ -124,15 +124,13 @@ class HuaweiHyperMetro(object):
             {'wwpns': wwns,
              'id': volume.id})
 
-        metadata = huawei_utils.get_lun_metadata(volume)
-        lun_id = metadata.get('remote_lun_id')
-        if lun_id is None:
+        lun_id, _ = huawei_utils.get_volume_lun_id(self.rmt_client, volume)
+        if not lun_id:
             msg = _("Can't get volume id. Volume name: %s.") % volume.id
             LOG.error(msg)
             raise exception.VolumeBackendAPIException(data=msg)
 
         original_host_name = connector['host']
-        host_id = self.client.add_host_with_check(original_host_name)
 
         # Create hostgroup if not exist.
         host_id = self.rmt_client.add_host_with_check(original_host_name)
@@ -145,16 +143,30 @@ class HuaweiHyperMetro(object):
         for wwn in wwns:
             if (wwn not in online_wwns_in_host
                     and wwn not in online_free_wwns):
-                wwns_in_host = (
-                    self.rmt_client.get_host_fc_initiators(host_id))
-                iqns_in_host = (
-                    self.rmt_client.get_host_iscsi_initiators(host_id))
-                if not (wwns_in_host or iqns_in_host):
-                    self.rmt_client.remove_host(host_id)
+                wwns.remove(wwn)
 
-                msg = _('Can not add FC port to host.')
-                LOG.error(msg)
-                raise exception.VolumeBackendAPIException(data=msg)
+                if (self.configuration.min_fc_ini_online ==
+                        constants.DEFAULT_MINIMUM_FC_INITIATOR_ONLINE):
+                    wwns_in_host = (
+                        self.rmt_client.get_host_fc_initiators(host_id))
+                    iqns_in_host = (
+                        self.rmt_client.get_host_iscsi_initiators(host_id))
+                    if not (wwns_in_host or iqns_in_host):
+                        self.rmt_client.remove_host(host_id)
+                    msg = (("Can't add FC initiator %(wwn)s to host %(host)s,"
+                            " please check if this initiator has been added "
+                            "to other host or isn't present on array.")
+                           % {"wwn": wwn, "host": host_id})
+                    LOG.error(msg)
+                    raise exception.VolumeBackendAPIException(data=msg)
+
+        if len(wwns) < self.configuration.min_fc_ini_online:
+            msg = (("The number of online fc initiator %(wwns)s less than"
+                    " the set %(set)s number.") % {
+                "wwns": wwns,
+                "set": self.configuration.min_fc_ini_online})
+            LOG.error(msg)
+            raise exception.VolumeBackendAPIException(data=msg)
 
         for wwn in wwns:
             self.rmt_client.ensure_fc_initiator_added(wwn, host_id,
@@ -192,13 +204,11 @@ class HuaweiHyperMetro(object):
     def disconnect_volume_fc(self, volume, connector):
         """Delete map between a volume and a host for FC."""
         wwns = connector['wwpns']
-        metadata = huawei_utils.get_lun_metadata(volume)
-        lun_id = metadata.get('remote_lun_id')
+        lun_id, _ = huawei_utils.get_volume_lun_id(self.rmt_client, volume)
         host_name = connector['host']
         lungroup_id = None
 
-        LOG.info('terminate_connection_fc: volume: %(id)s, '
-                 'wwpns: %(wwns)s, '
+        LOG.info('terminate_connection_fc: volume: %(id)s, wwpns: %(wwns)s, '
                  'lun_id: %(lunid)s.',
                  {'id': volume.id,
                   'wwns': wwns,
@@ -408,7 +418,8 @@ class HuaweiHyperMetro(object):
 
     def _check_metro_in_cg(self, metro_id, cg_id):
         metro_info = self.client.get_hypermetro_by_id(metro_id)
-        return metro_info and metro_info['ISINCG'] == 'true' and metro_info['CGID'] == cg_id
+        return (metro_info and metro_info['ISINCG'] == 'true'
+                and metro_info['CGID'] == cg_id)
 
     def _valid_rmt_metro_domain(self):
         domain_name = self.rmt_client.metro_domain

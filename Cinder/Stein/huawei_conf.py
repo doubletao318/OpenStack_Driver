@@ -72,6 +72,7 @@ class HuaweiConf(object):
             self._lun_copy_mode,
             self._lun_copy_wait_interval,
             self._lun_timeout,
+            self._get_minimum_fc_initiator,
         )
 
         for f in attr_funcs:
@@ -305,6 +306,30 @@ class HuaweiConf(object):
                     LOG.error(msg)
                     raise exception.InvalidInput(msg)
 
+    def _convert_one_iscsi_info(self, ini_text):
+        # get initiator configure attr list
+        attr_list = re.split('[{;}]', ini_text)
+
+        # get initiator configures
+        ini = {}
+        for attr in attr_list:
+            if not attr:
+                continue
+
+            pair = attr.split(':', 1)
+            if pair[0] == 'CHAPinfo':
+                value = pair[1].replace('#', ';', 1)
+            else:
+                value = pair[1]
+            ini[pair[0]] = value
+        if 'Name' not in ini and 'HostName' not in ini:
+            msg = _('Name or HostName must be specified for'
+                    ' initiator.')
+            LOG.error(msg)
+            raise exception.InvalidInput(msg)
+
+        return ini
+
     def _parse_remote_initiator_info(self, dev, ini_type):
         ini_info = {'default_target_ips': []}
 
@@ -318,32 +343,8 @@ class HuaweiConf(object):
             # [{'Name':'xxx'}, {'Name':'xxx','CHAPinfo':'mm-usr#mm-pwd'}]
             ini_list = re.split('\n', dev[ini_type])
 
-            def _convert_one_iscsi_info(ini_text):
-                # get initiator configure attr list
-                attr_list = re.split('[{;}]', ini_text)
-
-                # get initiator configures
-                ini = {}
-                for attr in attr_list:
-                    if not attr:
-                        continue
-
-                    pair = attr.split(':', 1)
-                    if pair[0] == 'CHAPinfo':
-                        value = pair[1].replace('#', ';', 1)
-                    else:
-                        value = pair[1]
-                    ini[pair[0]] = value
-                if 'Name' not in ini and 'HostName' not in ini:
-                    msg = _('Name or HostName must be specified for'
-                            ' initiator.')
-                    LOG.error(msg)
-                    raise exception.InvalidInput(msg)
-
-                return ini
-
             for text in ini_list:
-                ini = _convert_one_iscsi_info(text.strip())
+                ini = self._convert_one_iscsi_info(text.strip())
                 if 'Name' in ini:
                     initiators[ini['Name']] = ini
                 if 'HostName' in ini:
@@ -491,3 +492,25 @@ class HuaweiConf(object):
 
         interval = text.strip() if text else constants.DEFAULT_WAIT_TIMEOUT
         setattr(self.conf, 'lun_timeout', int(interval))
+
+    def _get_minimum_fc_initiator(self, xml_root):
+        text = xml_root.findtext('FC/MinOnlineFCInitiator')
+        minimum_fc_initiator = constants.DEFAULT_MINIMUM_FC_INITIATOR_ONLINE
+
+        if text and not text.isdigit():
+            msg = (_("Invalid FC MinOnlineFCInitiator '%s', "
+                     "MinOnlineFCInitiator must be a digit.") % text)
+            LOG.error(msg)
+            raise exception.InvalidInput(reason=msg)
+
+        if text and text.strip() and text.strip().isdigit():
+            try:
+                minimum_fc_initiator = int(text.strip())
+            except Exception as err:
+                msg = (_("Minimum FC initiator number %(num)s is set"
+                         " too large, reason is %(err)s")
+                       % {"num": text.strip(), "err": err})
+                LOG.error(msg)
+                raise exception.InvalidInput(reason=msg)
+        setattr(self.conf, 'min_fc_ini_online',
+                minimum_fc_initiator)

@@ -110,7 +110,8 @@ class Lun(CommonObject):
             "NAME": lun_name,
         }
         result = self.post(data=data)
-        _assert_result(result, 'Create clone lun for source ID %s error.', src_id)
+        _assert_result(result, 'Create clone lun for source ID %s error.',
+                       src_id)
         return result['data']
 
     def delete_lun(self, lun_id):
@@ -171,6 +172,12 @@ class Lun(CommonObject):
         result = self.get("/%(id)s", id=lun_id)
         _assert_result(result, 'Get lun info by id %s error.', lun_id)
         return result['data']
+
+    def get_lun_info_filter_id(self, lun_id):
+        result = self.get("?filter=ID::%(lun_id)s", lun_id=lun_id)
+        _assert_result(result, 'Get lun info filter id %s error.', lun_id)
+        if result.get('data'):
+            return result['data'][0]
 
     def get_lun_host_lun_id(self, host_id, lun_id):
         result = self.get(
@@ -506,6 +513,18 @@ class LunGroup(CommonObject):
             return
         _assert_result(result, 'Delete lungroup %s error.', lungroup_id)
 
+    def get_lungroup_ids_by_lun_id(self, lun_id, lun_type=constants.LUN_TYPE):
+        result = self.get('/associate?TYPE=256&ASSOCIATEOBJTYPE=%(type)s&'
+                          'ASSOCIATEOBJID=%(id)s', type=lun_type, id=lun_id)
+        _assert_result(result, 'Get lungroup id by lun id %s error.', lun_id)
+
+        lungroup_ids = []
+        if 'data' in result:
+            for item in result['data']:
+                lungroup_ids.append(item['ID'])
+
+        return lungroup_ids
+
 
 class IscsiInitiator(CommonObject):
     _obj_url = '/iscsi_initiator'
@@ -668,8 +687,13 @@ class MappingView(CommonObject):
 class FCInitiator(CommonObject):
     _obj_url = '/fc_initiator'
 
-    def get_fc_initiators(self):
-        result = self.get()
+    def get_fc_initiator_count(self):
+        result = self.get("/count")
+        _assert_result(result, 'Get FC initiator count error.')
+        return int(result['data']['COUNT'])
+
+    def _get_fc_initiator(self, start, end):
+        result = self.get("?range=[%(start)s-%(end)s]", start=start, end=end)
         _assert_result(result, 'Get online free FC wwn error.')
 
         totals = []
@@ -678,6 +702,21 @@ class FCInitiator(CommonObject):
             totals.append(item['ID'])
             if item['RUNNINGSTATUS'] == '27' and item['ISFREE'] == 'true':
                 frees.append(item['ID'])
+        return totals, frees
+
+    def get_fc_initiators(self):
+        fc_initiator_count = self.get_fc_initiator_count()
+        totals = []
+        frees = []
+        range_start = 0
+
+        while fc_initiator_count > 0:
+            range_end = range_start + constants.GET_PATCH_NUM
+            _totals, _frees = self._get_fc_initiator(range_start, range_end)
+            totals += _totals
+            frees += _frees
+            fc_initiator_count -= constants.GET_PATCH_NUM
+            range_start += constants.GET_PATCH_NUM
         return totals, frees
 
     def add_fc_initiator(self, initiator):
@@ -1157,6 +1196,39 @@ class LicenseFeature(CommonObject):
         return status
 
 
+class ClonePair(CommonObject):
+    _obj_url = '/clonepair'
+
+    def create_clone_pair(self, source_id, target_id, clone_speed):
+        data = {"copyRate": clone_speed,
+                "sourceID": source_id,
+                "targetID": target_id,
+                "isNeedSynchronize": "0"}
+        result = self.post("/relation", data=data)
+        _assert_result(result, 'Create ClonePair error, source_id is %s.',
+                       source_id)
+        return result['data']['ID']
+
+    def sync_clone_pair(self, pair_id):
+        data = {"ID": pair_id, "copyAction": 0}
+        result = self.put("/synchronize", data=data)
+        _assert_result(result, 'Sync ClonePair error, pair is is %s.', pair_id)
+
+    def get_clone_pair_info(self, pair_id):
+        result = self.get('/%(id)s', id=pair_id)
+        _assert_result(result, 'Get ClonePair %s error.', pair_id)
+        return result.get('data', {})
+
+    def delete_clone_pair(self, pair_id, delete_dst_lun=False):
+        data = {"ID": pair_id,
+                "isDeleteDstLun": delete_dst_lun}
+        result = self.delete("/%(id)s", id=pair_id, data=data)
+        if _error_code(result) == constants.CLONE_PAIR_NOT_EXIST:
+            LOG.warning('ClonePair %s to delete not exist.', pair_id)
+            return
+        _assert_result(result, 'Delete ClonePair %s error.', pair_id)
+
+
 class HostNameIgnoringAdapter(HTTPAdapter):
     def cert_verify(self, conn, url, verify, cert):
         conn.assert_hostname = False
@@ -1170,7 +1242,9 @@ def rest_operation_wrapper(func):
         need_relogin = False
 
         if not kwargs.get('log_filter'):
-            LOG.info('URL: %(url)s, Method: %(method)s, Data: %(data)s',
+            LOG.info('\nURL: %(url)s\n'
+                     'Method: %(method)s\n'
+                     'Data: %(data)s\n',
                      {'url': (self._login_url or '') + url,
                       'method': func.__name__,
                       'data': kwargs.get('data')})
@@ -1436,7 +1510,7 @@ class RestClient(object):
 
     def check_feature(self, obj):
         try:
-            result = self.get('/%s/count' % obj)
+            result = self.get('/%s/count' % obj, log_filter=True)
         except requests.HTTPError as exc:
             if exc.response.status_code == 404:
                 return False

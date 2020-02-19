@@ -156,6 +156,8 @@ class HuaweiHyperMetro(object):
         hypermetro = self.local_cli.get_hypermetro_by_lun_name(lun_name)
 
         if hypermetro:
+            huawei_utils.remove_lun_from_lungroup(
+                self.remote_cli, hypermetro['REMOTEOBJID'])
             if (hypermetro['RUNNINGSTATUS'] in (
                     constants.METRO_RUNNING_NORMAL,
                     constants.METRO_RUNNING_SYNC)):
@@ -315,12 +317,12 @@ class HuaweiHyperMetro(object):
 
     def _stop_hypermetro_if_need(self, metro_id):
         metro_info = self.local_cli.get_hypermetro_by_id(metro_id)
-        if metro_info:
-            if ((metro_info['HEALTHSTATUS'] == constants.METRO_HEALTH_NORMAL
-                 ) and metro_info['RUNNINGSTATUS'] in (
+        if metro_info and (
+                (metro_info['HEALTHSTATUS'] == constants.METRO_HEALTH_NORMAL)
+                and metro_info['RUNNINGSTATUS'] in (
                     constants.METRO_RUNNING_NORMAL,
                     constants.METRO_RUNNING_SYNC)):
-                self.local_cli.stop_hypermetro(metro_id)
+            self.local_cli.stop_hypermetro(metro_id)
 
     def add_hypermetro_to_group(self, group_id, metro_id):
         metrogroup = huawei_utils.get_hypermetro_group(
